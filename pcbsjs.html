@@ -1,0 +1,1614 @@
+<html>
+<head>
+    <title>PCBS JS</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vuetify@3.7.18/dist/vuetify.min.css" />
+    <link rel="stylesheet" href="./vuetify.min.css" />
+    <style>
+        ul {
+            list-style-type: none;
+        }
+
+        .job-card {
+            padding: 10px;
+            background-color: #1d1d1d;
+            border: 1px solid white;
+            margin-bottom: 50px;
+        }
+
+            .job-card table {
+                display: inline-block;
+            }
+
+                .job-card table, .job-card table td {
+                    border: 1px solid black;
+                }
+
+        table.rig, table.rig-ux, table.rig td, table.rig-ux td {
+            border: 1px solid black;
+        }
+
+        table.rig, table.rig-ux {
+            width: 100%;
+        }
+
+        .broken {
+            color: red;
+        }
+
+        .unused {
+            color: lightyellow;
+        }
+
+        .used {
+            color: lightblue;
+        }
+
+        .custom_marked {
+            color: lightblue;
+        }
+
+        .incompatibility-message {
+            color: red;
+        }
+
+        .compatibility-message {
+            color: green;
+        }
+
+        td.part-select {
+            min-width: 200px;
+        }
+
+        .job-requirement-card {
+            vertical-align: top;
+        }
+
+        #left-panel {
+            width: 50%;
+            display: inline-block;
+            padding-right: 20px;
+        }
+
+        #right-panel {
+            vertical-align: top;
+            width: 50%;
+            display: inline-block;
+        }
+
+            #right-panel table, #right-panel table td {
+                border: 1px solid black;
+            }
+
+        #float {
+            position: fixed;
+            right: 0;
+            bottom: 0;
+            border: 1px solid;
+            background: black;
+        }
+
+        .part-name:hover {
+            cursor: pointer;
+            background: grey;
+        }
+    </style>
+</head>
+<body>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vuetify@3.7.18/dist/vuetify.min.js"></script>
+
+    <template id="v-rig">
+        <table class="rig">
+            <thead><tr><td></td><td>Part</td><td>Used</td><td>Broken</td><td>Cost</td><td>Price</td><td>Quality</td><td>Action</td></tr></thead>
+            <tbody>
+                <tr v-for="part in rig.GetAllParts().filter(p => p)">
+                    <td>{{part?.TypeTitle()}}</td>
+                    <td class="part-name" @click="() => {if (part) { navigator.clipboard.writeText(part.CopyName()); }}">{{part?.CopyName()}}</td>
+                    <td :class="{used: part?.used, unused: !part?.used}" @click="if (part) { part.used = !part.used; }">
+                        {{part?.used ? 'Used' : 'New'}}
+                    </td>
+                    <td :class="{broken: part?.broken}" @click="if (part) { part.broken = !part.broken; }">
+                        {{part ? (part.broken ? 'Broken' : 'Good') : ''}}
+                    </td>
+                    <td>{{part?.cost}}</td>
+                    <td>{{part?.price}}</td>
+                    <td>{{part?.quality?.toFixed(2)}}</td>
+                    <td>
+                        <v-btn v-if="part" @click="rig.RemovePart(part)">Remove</v-btn>
+                        <v-btn v-if="part" @click="part.customTag = !part.customTag"
+                               :class="{custom_marked: part.customTag}">{{part.customTag ? 'Marked' : 'Mark'}}</v-btn>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <table class="rig-ux">
+            <tbody>
+                <tr>
+                    <td>Total Cost: {{rig.Cost()}}</td>
+                    <td>
+                        3DMark: {{rig.Score().total}} ({{rig.Score().cpuScore}} + {{rig.Score().gpuScore}})
+                    </td>
+                    <td>
+                        Wattage: {{rig.WattageUse()}}
+                    </td>
+                </tr>
+                <tr>
+                    <td colspan="3">
+                        <ul>
+                            <li class="incompatibility-message" v-for="msg in [...rig.CheckKeyComponents(), ...rig.Compatibility()]">{{msg}}</li>
+                        </ul>
+                        <span class="compatibility-message" v-if="rig.CheckKeyComponents().length == 0 && rig.Compatible()">Compatible</span>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="part-select">
+                        <v-autocomplete class="rig-part-select" label="Part" :items="[{title: 'All', value: 'all'},
+                              {title: 'Case', value: 'case'},
+                              {title: 'Motherboard', value: 'motherboard'},
+                              {title: 'CPU', value: 'cpu'},
+                              {title: 'Cooler', value: 'cooler'},
+                              {title: 'PSU', value: 'psu'},
+                              {title: 'RAM', value: 'ram'},
+                              {title: 'GPU', value: 'gpu'},
+                              {title: 'Storage', value: 'storage'}]" v-model="ux.partType"></v-autocomplete>
+                    </td>
+                    <td class="part-select">
+                        <v-autocomplete class="rig-part-select" label="Manufacturer"
+                                        :items="ux.partType == 'all' ? ['All', ...db.AllManufacturers] : ['All', ...db.ManufacturerList[ux.partType.toUpperCase()]]"
+                                        v-model="ux.manufacturer"></v-autocomplete>
+                    </td>
+                    <td class="part-select">
+                        <v-autocomplete class="rig-part-select" label="Model" :items="db.AllPartDescs.filter(part =>
+                            {
+                            const type = ux.partType.toUpperCase();
+                            const checkType = (part) => {
+                            if (type == 'ALL') { return true; }
+                            if (type == 'STORAGE') {
+                            return ['HDD', 'SSD', 'M2'].includes(part.type);
+                            }
+                            return type == part.type;
+                            }
+                            return (ux.manufacturer == 'All' || part.manufacturer == ux.manufacturer) &&
+                            checkType(part) && part.price > 0;}).sort((lhs, rhs) => lhs.price - rhs.price)
+                            .map(part => ({ title: part.DisplayName(), value: part.id }))"
+                            v-model="ux.partId">
+                        </v-autocomplete>
+                    </td>
+                </tr>
+                <tr>
+                    <td colspan="1"><v-btn @click="rig.AddPartById(rig.ux.partId, db.AllPartDescs, inventory, false)">Add New Part</v-btn></td>
+                    <td colspan="1">
+                        <v-btn v-if="inventory.find(part => part.id == rig.ux.partId && part.IsUsedAvailable())"
+                               @click="rig.AddPartById(rig.ux.partId, db.AllPartDescs, inventory, true)">Add Used Part</v-btn>
+                    </td>
+                    <td></td>
+                </tr>
+            </tbody>
+        </table>
+    </template>
+    <div id="app">
+        <div id="left-panel">
+            <v-switch label="Fast Mode" v-model="fastMode"></v-switch>
+            <div v-for="job in jobs" class="job-card">
+                <table>
+                    <tbody>
+                        <tr><td>ID</td><td>{{job.id}}</td></tr>
+                        <tr><td>From</td><td>{{job.from}}</td></tr>
+                        <tr><td>Type</td><td>{{job.type}}</td></tr>
+                        <tr><td>Labor</td><td>{{job.labor}}</td></tr>
+                        <tr><td>Budget</td><td><input style="width: 100%" type="text" v-model="job.budget" /></td></tr>
+                        <tr>
+                            <td colspan="2">
+                                <v-rig :rig="job.rig" :ux="job.rig.ux" :inventory="inventory" :navigator="navigator"
+                                       :db="{AllManufacturers: AllManufacturers, ManufacturerList: ManufacturerList, AllPartDescs: allPartDescs}"></v-rig>
+                            </td>
+                        </tr>
+                        <tr><td colspan="2"><textarea style="width: 100%"></textarea></td></tr>
+                    </tbody>
+                </table>
+                <table class="job-requirement-card" style="width:100%">
+                    <tr>
+                        <td>
+                            <ul>
+                                <li>
+                                    <v-switch v-model="job.allowUsed" label="Allow Used Parts"
+                                              :color="job.allowUsed ? 'green' : ''" />
+                                </li>
+                                <li>
+                                    <v-switch v-model="job.allowDualGPU" label="Allow Dual GPU"
+                                              :color="job.allowDualGPU ? 'green' : ''" />
+                                </li>
+                                <li>
+                                    <v-switch v-model="job.forceDualGPU" label="Force Dual GPU"
+                                              :color="job.forceDualGPU ? 'green' : ''" />
+                                </li>
+                            </ul>
+                        </td>
+                        <td class="part-select">
+                            <div>Allow Replacement Parts</div>
+                            <table>
+                                <tr v-for="type in [{title: 'Motherboard', value: 'MOTHERBOARD'},
+                                    {title: 'CPU', value: 'CPU'},
+                                    {title: 'Cooler', value: 'COOLER'},
+                                    {title: 'GPU', value: 'GPU'},
+                                    {title: 'RAM', value: 'RAM'},
+                                    {title: 'PSU', value: 'PSU'},]"
+                                    @click="ToggleArrayValue(job.allowReplacementParts, type.value)">
+                                    <td>{{type.title}}</td>
+                                    <td><input type="checkbox" :value="type.value" v-model="job.allowReplacementParts" /></td>
+                                </tr>
+                            </table>
+                            <v-select label="Manufacturer" v-model="job.translatedObjective.manufacturer" :items="AllManufacturers"></v-select>
+                        </td>
+                        <td class="part-select">
+                            <div>
+                                <v-autocomplete label="Better CPU" v-model="job.translatedObjective.betterCPU" :items="CPUList"></v-autocomplete>
+                                <v-switch label="Inclusive" v-model="job.translatedObjective.betterCPUInclusive"
+                                          :color="job.translatedObjective.betterCPUInclusive ? 'green' : ''" />
+                            </div>
+                            <div>
+                                <v-autocomplete label="Better GPU" v-model="job.translatedObjective.betterGPU" :items="GPUList"></v-autocomplete>
+                                <v-switch label="Inclusive" v-model="job.translatedObjective.betterGPUInclusive"
+                                          :color="job.translatedObjective.betterGPUInclusive ? 'green' : ''" />
+                            </div>
+                        </td>
+                        <td class="part-select">
+                            <v-text-field label="RAM (GB)" v-model="job.translatedObjective.ramSize"></v-text-field>
+                            <v-text-field label="VRAM (GB)" v-model="job.translatedObjective.vramSize"></v-text-field>
+                            <v-text-field label="3DMark Score" v-model="job.translatedObjective.score3dmark"></v-text-field>
+                        </td>
+                        <td><v-btn @click="Calculate(job)" style="width: 100%">Calculate</v-btn></td>
+                    </tr>
+                </table>
+                <table>
+                    <tr v-if="job.solutions?.length == 0"><td colspan="3">No Solution!</td></tr>
+                    <tr v-if="job.solutions?.length > 0">
+                        <td>Budget Use: {{job.solutions[0].cost}}</td>
+                        <td>Kept value as new parts: {{job.solutions[0].valueKeptFromParts}}</td>
+                        <td colspan="2">3DMark: {{job.solutions[0].score.total}} ({{job.solutions[0].score.cpuScore}}, {{job.solutions[0].score.gpuScore}})</td>
+                    </tr>
+                    <tr v-if="job.solutions?.length > 0">
+                        <td>Removed Parts</td>
+                        <td colspan="3">
+                            <ul><li v-for="part in job.solutions[0].diff.remove" :title="part.price">{{part.DisplayName()}}</li></ul>
+                        </td>
+                    </tr>
+                    <tr v-if="job.solutions?.length > 0">
+                        <td>Added Parts</td>
+                        <td colspan="3">
+                            <ul><li v-for="part in job.solutions[0].diff.add" :title="part.cost">{{part.DisplayName()}}</li></ul>
+                        </td>
+                    </tr>
+                    <tr v-if="job.solutions?.length > 0">
+                        <td></td>
+                        <td>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        <div id="right-panel">
+            <h1>Rig Builder</h1>
+            <v-rig :rig="rigBuilder.rig" :ux="rigBuilder.rig.ux" :inventory="inventory" :navigator="navigator"
+                   :db="{AllManufacturers: AllManufacturers, ManufacturerList: ManufacturerList, AllPartDescs: allPartDescs}"></v-rig>
+
+            <h2>Will it run</h2>
+            <table>
+                <thead><tr><td></td><td style="min-width: 200px"></td><td></td></tr></thead>
+                <tbody>
+                    <tr>
+                        <td>Minimum CPU</td>
+                        <td><v-autocomplete label="CPU" :items="CPUList" v-model="rigBuilder.ux.minCPU"></v-autocomplete></td>
+                        <td>
+                            <span style="color: green" v-if="(rigBuilder.rig.cpu?.quality ?? 0) >= (rigBuilder.wit.minCPU?.quality ?? 0)">Met</span>
+                            <span style="color: red" v-if="(rigBuilder.rig.cpu?.quality ?? 0) < (rigBuilder.wit.minCPU?.quality ?? 0)">Not Met</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Minimum GPU</td>
+                        <td><v-autocomplete label="GPU" :items="GPUList" v-model="rigBuilder.ux.minGPU"></v-autocomplete></td>
+                        <td>
+                            <span style="color: green" v-if="!rigBuilder.wit.minGPU || rigBuilder.rig.gpu.some(gpu => gpu.quality >= (rigBuilder.wit.minGPU?.quality ?? 0))">Met</span>
+                            <span style="color: red" v-if="rigBuilder.wit.minGPU && rigBuilder.rig.gpu.every(gpu => gpu.quality < (rigBuilder.wit.minGPU?.quality ?? 0))">Not Met</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>RAM</td>
+                        <td><v-text-field label="RAM" v-model="rigBuilder.wit.minRAM"></v-text-field></td>
+                        <td>
+                            <span style="color: green" v-if="!rigBuilder.wit.minRAM || rigBuilder.rig.ram.reduce((sum, ram) => sum + ram.size, 0) >= parseInt(rigBuilder.wit.minRAM)">Met</span>
+                            <span style="color: red" v-if="rigBuilder.wit.minRAM && rigBuilder.rig.ram.reduce((sum, ram) => sum + ram.size, 0) < parseInt(rigBuilder.wit.minRAM)">Not Met</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>VRAM</td>
+                        <td><v-text-field label="VRAM" v-model="rigBuilder.wit.minVRAM"></v-text-field></td>
+                        <td>
+                            <span style="color: green" v-if="!rigBuilder.wit.minVRAM || rigBuilder.rig.gpu.reduce((sum, gpu) => sum + gpu.vram, 0) >= parseInt(rigBuilder.wit.minVRAM)">Met</span>
+                            <span style="color: red" v-if="rigBuilder.wit.minVRAM && rigBuilder.rig.gpu.reduce((sum, gpu) => sum + gpu.vram, 0) < parseInt(rigBuilder.wit.minVRAM)">Not Met</span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <h2>Find RAM Groups</h2>
+            <v-btn @click="FindRamGroups">Find in inventory</v-btn>
+            <table>
+                <tr v-for="group in rigBuilder.ramGroups">
+                    <td>
+                        <table>
+                            <thead><tr><td>Size</td><td>Frequency</td><td></td></tr></thead>
+                            <tbody>
+                                <tr v-for="ram in group">
+                                    <td>{{ram.size}}</td>
+                                    <td>{{ram.speed}}</td>
+                                    <td>{{ram.CopyName()}}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+            <h2>Find GPU Groups</h2>
+            <v-btn @click="FindGPUGroups">Find in inventory</v-btn>
+            <table>
+                <tr v-for="group in rigBuilder.gpuGroups">
+                    <td>
+                        <table>
+                            <thead>
+                                <tr><td>GPU</td><td>Single Score</td><td>Dual Score</td><td>Tech</td><td>Wattage</td></tr>
+                            </thead>
+                            <tr v-for="gpu in group">
+                                <td>{{gpu.CopyName()}}</td>
+                                <td>{{Math.max(Math.floor(328.0 / (1 / gpu.score11 + 1 / gpu.score21)), 100)}}</td>
+                                <td>{{Math.max(Math.floor(328.0 / (1 / gpu.score12 + 1 / gpu.score22)), 100)}}</td>
+                                <td>{{gpu.useSLI ? "SLI" : "CrossFire"}}</td>
+                                <td>{{gpu.wattage}}</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+            <h2>Find CPU</h2>
+            <v-select label="Mem Channel" v-model="rigBuilder.ux.ramChannel" :items="[1, 2]"></v-select>
+            <v-autocomplete label="Mem Speed" v-model="rigBuilder.ux.ramSpeed" :items=" [ 2133, 2400, 2666, 2800, 3000, 3200, 3333, 4000, 2933, 3400, 3466, 3600, 3733, 3866, 4133, 4266, 4333, 4400, 4500, 4600, 4700, 4800 ] "></v-autocomplete>
+            <v-switch label="Only Show Owned Used" v-model="rigBuilder.ux.onlyShowUsedCPU"></v-switch>
+            <table>
+                <thead>
+                    <tr><td>CPU</td><td>Score</td><td>Used Part Count</td></tr>
+                </thead>
+                <tr v-for="cpu in partDescs.cpu.filter(cpu =>
+                    cpu.price > 0).map(cpu => ({
+                    name: cpu.DisplayName(),
+                    count: inventory.reduce((sum, inv) => sum + (inv.id == cpu.id && inv.used ? 1 : 0), 0),
+                    score: parseInt(Math.max(Math.max(0,
+                    cpu.coefClock * cpu.clockFreq + cpu.coefMemChannel * rigBuilder.ux.ramChannel +
+                    cpu.coefMemClock * rigBuilder.ux.ramSpeed + cpu.coefAdjustment) * 298.0, 100)),
+                    ...cpu,
+                    })).filter(cpu => !rigBuilder.ux.onlyShowUsedCPU || cpu.count > 0)">
+                    <td>
+                        {{cpu.name}}
+                    </td>
+                    <td>
+                        {{cpu.score}}
+                    </td>
+                    <td>
+                        {{cpu.count}}
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div style="height: 500px">
+        </div>
+        <div id="float">
+            <div class="part-name" v-for="part in ['SilverStone PS14 (Black + Window)', 'Mortoni Thermal 100', 'Shean Powerking 250',
+                 'Mortoni Value Supreme 2 GB 2133 MHz', 'EVGA GeForce GT 1030 SC', 'Mortoni EZStore 120GB',
+                 'Team Group T-Force Night Hawk (White LED) 16 GB 3200 MHz',]"
+                 @click="navigator.clipboard.writeText(part)">{{part}}</div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref } = Vue;
+        const { createVuetify } = Vuetify;
+
+        class PartDesc {
+            id;
+            name;
+            type;
+            manufacturer;
+            inShop;
+            price;
+            quality;
+
+            wattage; // cpu, gpu
+            socket; // cpu, motherboard
+            size; // motherboard, storage, ram, psu
+            ddr; // motherboard, ram
+            supportSLI; // motherboard
+            supportCF; // motherboard
+            speed; // ram
+            vram; // gpu
+            useSLI; // gpu
+            dual; // gpu
+            chipset; // gpu
+            sockets; // cooler
+            ramSpeed; // motherboard
+            length; // gpu, psu
+            maxPSULength; // case
+            maxCPUFanHeight; // case
+            maxGPULength; // case
+            maxRadiatorLength120; // case
+            maxRadiatorLength140; // case
+            psuSizes; // case
+            motherboardTypes; // case
+
+            coefClock;
+            coefMemChannel;
+            coefMemClock;
+            coefAdjustment;
+            clockFreq;
+            score11;
+            score21;
+            score12;
+            score22;
+
+            Specs() {
+                switch (this.type) {
+                    case 'CASE':
+                        return "Motherboard: " + this.motherboardTypes + "\n" +
+                            "PSU Size: " + this.psuSizes +
+                            "Max PSU Length: " + this.maxPSULength +
+                            "Max GPU Length: " + this.maxGPULength +
+                            "Max CPU Fan Height: " + this.maxCPUFanHeight +
+                            "Max Radiator Fans: " + this.maxRadiatorLength120 + " " + this.maxRadiatorLength140;
+                    default:
+                        return "";
+                }
+            }
+
+            DisplayName() {
+                if (this.type == 'RAM') {
+                    return this.manufacturer + " " + this.name + " " + this.size + " GB" + " " + this.speed + " MHz";
+                }
+                return this.manufacturer + " " + this.name;
+            }
+
+            TypeTitle() {
+                switch (this.type) {
+                    case 'CASE':
+                        return 'Case';
+                    case 'MOTHERBOARD':
+                        return 'Motherboard';
+                    case 'CPU':
+                    case 'RAM':
+                    case 'PSU':
+                    case 'GPU':
+                        return this.type;
+                    case 'COOLER':
+                        return 'Cooler';
+                    case 'HDD':
+                    case 'SSD':
+                    case 'M2':
+                        return 'Storage';
+                    case 'CASE_FAN':
+                        return 'Case Fan';
+                    default:
+                        return 'Other';
+                }
+            }
+        }
+
+        class Part extends PartDesc {
+            used;
+            broken;
+            cost;
+            jobId;
+
+            marked;
+            customTag;
+
+            constructor(optionsParam) {
+                super(optionsParam);
+                const options = Object.assign({
+                    partDesc: null,
+                    used: false,
+                    broken: false,
+                    cost: 0,
+                    jobId: 0,
+                }, optionsParam);
+                if (options.partDesc instanceof PartDesc) {
+                    Object.assign(this, options.partDesc);
+                    this.used = options.used;
+                    this.broken = options.broken;
+                    this.cost = options.cost;
+                    this.jobId = options.jobId;
+                }
+            }
+
+            IsUsedAvailable() {
+                return !this.broken && this.used && !this.marked;
+            }
+
+            DisplayName() {
+                if (this.type == 'RAM') {
+                    return this.manufacturer + " " + this.name + " " + this.size + " GB" + " " + this.speed + " MHz" + (this.used ? " (used)" : "");
+                }
+                return this.manufacturer + " " + this.name + (this.used ? " (used)" : "");
+            }
+
+            CopyName() {
+                if (this.type == 'RAM') {
+                    return this.manufacturer + " " + this.name + " " + this.size + " GB" + " " + this.speed + " MHz";
+                }
+                return this.manufacturer + " " + this.name;
+            }
+
+            DebugString() {
+                return this.name + (this.used ? "(Used)" : "") + " " + this.cost;
+            }
+        }
+
+        class RigUX {
+            partType = 'all';
+            manufacturer = 'All';
+            partId;
+        }
+
+        class Rig {
+            case;
+            motherboard;
+            cpu;
+            cooler;
+            psu;
+            ram = [];
+            gpu = [];
+            storage = [];
+            caseFan = [];
+            radiator = [];
+            reservoir = [];
+            m2 = [];
+            ux = new RigUX();
+
+            Duplicate() {
+                const rig = new Rig();
+                Object.assign(rig, this);
+                rig.ux = new RigUX();
+                return rig;
+            }
+
+            GetAllParts() {
+                return [this.case, this.motherboard, this.cpu, this.cooler, this.psu,
+                ...this.ram, ...this.gpu, ...this.storage, ...this.caseFan, ...this.radiator, ...this.reservoir];
+            }
+
+            GetPartField(type) {
+                switch (type) {
+                    case 'CASE':
+                    case 'MOTHERBOARD':
+                    case 'CPU':
+                    case 'RAM':
+                    case 'PSU':
+                    case 'GPU':
+                    case 'COOLER':
+                        return type.toLowerCase();
+                    case 'HDD':
+                    case 'SSD':
+                    case 'M2':
+                        return 'storage';
+                    case 'CASE_FAN':
+                        return 'caseFan';
+                    default:
+                        return 'other';
+                }
+            }
+
+            AddPartById(partId, allPartDescs, inventory = null, used = false) {
+                const partDesc = allPartDescs.find(partDesc => partDesc.id == partId);
+                if (partDesc) {
+                    let part;
+                    if (used) {
+                        part = inventory.find(part => part.id == partId && part.IsUsedAvailable());
+                        if (part) {
+                            part.marked = true;
+                        }
+                    }
+                    if (!part) {
+                        part = new Part({ partDesc: partDesc, cost: partDesc.price });
+                    }
+                    const field = this.GetPartField(part.type);
+                    if (['case', 'motherboard', 'cpu', 'cooler', 'psu'].includes(field)) {
+                        this[field] = part;
+                    }
+                    if (['ram', 'gpu', 'storage', 'caseFan'].includes(field)) {
+                        this[field].push(part);
+                    }
+                }
+            }
+
+            RemovePart(part) {
+                const field = this.GetPartField(part.type);
+                if (['case', 'motherboard', 'cpu', 'cooler', 'psu'].includes(field)) {
+                    this[field] = null;
+                }
+                if (['ram', 'gpu', 'storage', 'caseFan'].includes(field)) {
+                    this[field].splice((v, i, arr) => arr.indexOf(v) == i, 1);
+                }
+            }
+
+            OverBudget(budget) {
+                return budget < this.Cost();
+            }
+
+            Compatible_Cooler_Motherboard() {
+                if (!this.motherboard || !this.cooler) {
+                    return true;
+                }
+                return this.cooler.sockets.includes(this.motherboard.socket);
+            }
+
+            Compatible_CPU_Motherboard() {
+                if (!this.motherboard || !this.cpu) {
+                    return true;
+                }
+                if (this.motherboard.socket == this.cpu.socket) {
+                    return true;
+                }
+                if ([this.motherboard.socket, this.cpu.socket].every(socket => ['LGA_1151_SKY', 'LGA_1151_KABY'].includes(socket))) {
+                    return true;
+                }
+                return false;
+            }
+
+            Compatible_RAM() {
+                return this.ram.every(ram =>
+                    ram.manufacturer == this.ram[0].manufacturer &&
+                    ram.speed == this.ram[0].speed && ram.size == this.ram[0].size
+                );
+            }
+
+            Compatible_RAM_Motherboard() {
+                if (!this.motherboard) {
+                    return true;
+                }
+                return this.ram.every(ram => ram.ddr == this.motherboard.ddr);
+            }
+
+            Compatible_PSU() {
+                if (!this.psu) {
+                    return true;
+                }
+                if (this.case && !this.case.psuSizes.includes(this.psu.size)) {
+                    return false;
+                }
+                if (this.case && (this.case.maxPSULength != 0 && this.case.maxPSULength < this.psu.length)) {
+                    return false;
+                }
+                return this.WattageUse() <= (this.psu?.wattage ?? 0);
+            }
+
+            Compatible_DUAL_GPU() {
+                if (this.gpu.length < 2 || !this.motherboard) {
+                    return true;
+                }
+                const gpu1 = this.gpu[0];
+                const gpu2 = this.gpu[1];
+                if (!gpu1.dual || !gpu2.dual) {
+                    return false;
+                }
+                if (gpu1.chipset != gpu2.chipset) {
+                    return false;
+                }
+                if (gpu1.vram != gpu2.vram) {
+                    return false;
+                }
+                if (gpu1.useSLI && !this.motherboard.supportSLI) {
+                    return false;
+                }
+                if (!gpu1.useSLI && !this.motherboard.supportCF) {
+                    return false;
+                }
+                return true;
+            }
+
+            Compatible_Motherboard_Case() {
+                if (!this.motherboard || !this.case) {
+                    return true;
+                }
+                return this.case.motherboardTypes.includes(this.motherboard.size);
+            }
+
+            Compatible_GPU_Case() {
+                if (!this.case) {
+                    return true;
+                }
+                return this.gpu.every(gpu => gpu.length <= this.case.maxGPULength);
+            }
+
+            CheckKeyComponents() {
+                const checks = [
+                    { func: () => this.case, msg: 'Missing case', },
+                    { func: () => this.motherboard, msg: 'Missing motherboard', },
+                    { func: () => this.cpu, msg: 'Missing CPU', },
+                    { func: () => this.cooler, msg: 'Missing cooler', },
+                    { func: () => this.psu, msg: 'Missing PSU', },
+                    { func: () => this.ram.length > 0, msg: 'Missing RAM', },
+                    { func: () => this.gpu.length > 0, msg: 'Missing GPU', },
+                    { func: () => this.storage.length > 0, msg: 'Missing storage', },
+                ];
+                return checks.filter(check => !check.func()).map(check => check.msg);
+            }
+
+            Compatibility() {
+                const checks = [{
+                    func: this.Compatible_Cooler_Motherboard.bind(this),
+                    msg: 'Incompatible: Cooler - Motherboard',
+                }, {
+                    func: this.Compatible_CPU_Motherboard.bind(this),
+                    msg: 'Incompatible: CPU - Motherboard',
+                }, {
+                    func: this.Compatible_RAM.bind(this),
+                    msg: 'Incompatible: RAM',
+                }, {
+                    func: this.Compatible_PSU.bind(this),
+                    msg: 'Incompatible: PSU',
+                }, {
+                    func: this.Compatible_DUAL_GPU.bind(this),
+                    msg: 'Incompatible: Dual GPU',
+                }, {
+                    func: this.Compatible_Motherboard_Case.bind(this),
+                    msg: 'Incompatible: Motherboard - Case',
+                }, {
+                    func: this.Compatible_GPU_Case.bind(this),
+                    msg: 'Incompatible: GPU - Case',
+                },];
+                return checks.filter(check => !check.func()).map(check => check.msg);
+            }
+
+            WattageUse() {
+                const systemWattage = 30;
+                return (this.cpu?.wattage ?? 0) + this.gpu.reduce((sum, part) => sum + part.wattage, 0) + systemWattage;
+            }
+
+            Compatible_BuildCorePartsPresent() {
+                return this.motherboard && this.cpu && this.psu && this.ram.length > 0 && this.gpu.length > 0;
+            }
+
+            DebugCompatible() {
+                console.log("Compatible_Motherboard_Case: " + this.Compatible_Motherboard_Case());
+                console.log("Compatible_Cooler_Motherboard: " + this.Compatible_Cooler_Motherboard());
+                console.log("Compatible_CPU_Motherboard: " + this.Compatible_CPU_Motherboard());
+                console.log("Compatible_RAM: " + this.Compatible_RAM());
+                console.log("Compatible_RAM_Motherboard: " + this.Compatible_RAM_Motherboard());
+                console.log("Compatible_PSU: " + this.Compatible_PSU());
+                console.log("Compatible_DUAL_GPU: " + this.Compatible_DUAL_GPU());
+                console.log("Compatible_GPU_Case: " + this.Compatible_GPU_Case());
+            }
+
+            Compatible() {
+                const compatible = this.Compatible_BuildCorePartsPresent() &&
+                    this.Compatible_Motherboard_Case() && this.Compatible_GPU_Case() &&
+                    this.Compatible_Cooler_Motherboard() && this.Compatible_CPU_Motherboard() && this.Compatible_RAM() &&
+                    this.Compatible_RAM_Motherboard() && this.Compatible_PSU() && this.Compatible_DUAL_GPU();
+                return compatible;
+            }
+
+            Objective_CPU_Quality(quality, inclusive) {
+                if (quality && inclusive && this.cpu.quality < quality) {
+                    return false;
+                }
+                if (quality && !inclusive && this.cpu.quality <= quality) {
+                    return false;
+                }
+                return true;
+            }
+            Objective_GPU_Quality(quality, inclusive) {
+                if (quality && inclusive && this.gpu.every(gpu => gpu.quality < quality)) {
+                    return false;
+                }
+                if (quality && !inclusive && this.gpu.every(gpu => gpu.quality <= quality)) {
+                    return false;
+                }
+                return true;
+            }
+            Objective_RAM_Size(size) {
+                if (size && this.ram.reduce((sum, ram) => sum + ram.size, 0) < size) {
+                    return false;
+                }
+                return true;
+            }
+            Objective_Score(score) {
+                if (score && this.Score().total < score) {
+                    return false;
+                }
+                return true;
+            }
+
+            MeetObjectives(translatedObjective) {
+                if (this.OverBudget(translatedObjective.budget)) {
+                    return "Budget exceeded " + this.Cost() + "/" + translatedObjective.totalBudget;
+                }
+                if (!this.Compatible()) {
+                    return "Incompatible build";
+                }
+                if (!this.Objective_CPU_Quality(translatedObjective.cpuQuality, translatedObjective.cpuQualityInclusive)) {
+                    return "CPU Inferior " + this.cpu.quality + "/" + translatedObjective.gpuQuality;
+                }
+                if (!this.Objective_GPU_Quality(translatedObjective.gpuQuality, translatedObjective.gpuQualityInclusive)) {
+                    return "GPU Inferior " + this.gpu.map(gpu => gpu.quality + "").join(",") + "/" + translatedObjective.gpuQuality;
+                }
+                if (!this.Objective_RAM_Size(translatedObjective.ramSize)) {
+                    return "RAM size less than " + translatedObjective.ramSize;
+                }
+                if (!this.Objective_Score(translatedObjective.score3dmark)) {
+                    return "Insufficient 3DMark score";
+                }
+                if (translatedObjective.vramSize && translatedObjective.gpuQuality) {
+                    if (this.gpu.every(gpu => gpu.vram < translatedObjective.vramSize && gpu.quality < translatedObjective.gpuQuality)) {
+                        return "GPU does not meet need";
+                    }
+                }
+                return "OK";
+            }
+
+            Cost() {
+                return (this.case?.cost ?? 0) + (this.motherboard?.cost ?? 0) + (this.cpu?.cost ?? 0) + (this.cooler?.cost ?? 0) + (this.psu?.cost ?? 0) +
+                    this.ram.reduce((sum, p) => sum + p?.cost ?? 0, 0) + this.gpu.reduce((sum, p) => sum + p?.cost ?? 0, 0) +
+                    this.storage.reduce((sum, p) => sum + p?.cost ?? 0, 0);
+            }
+
+            Diff(rig) {
+                const diff = {
+                    add: [],
+                    remove: [],
+                };
+                if (this.motherboard != rig.motherboard) {
+                    diff.add.push(rig.motherboard);
+                    diff.remove.push(this.motherboard);
+                }
+                if (this.cpu != rig.cpu) {
+                    diff.add.push(rig.cpu);
+                    diff.remove.push(this.cpu);
+                }
+                if (this.cooler != rig.cooler) {
+                    diff.add.push(rig.cooler);
+                    diff.remove.push(this.cooler);
+                }
+                if (this.psu != rig.psu) {
+                    diff.add.push(rig.psu);
+                    diff.remove.push(this.psu);
+                }
+                diff.add.push(...rig.ram.filter(part => !this.ram.includes(part)));
+                diff.remove.push(...this.ram.filter(part => !rig.ram.includes(part)));
+                diff.add.push(...rig.gpu.filter(part => !this.gpu.includes(part)));
+                diff.remove.push(...this.gpu.filter(part => !rig.gpu.includes(part)));
+                diff.add.push(...rig.storage.filter(part => !this.storage.includes(part)));
+                diff.remove.push(...this.storage.filter(part => !rig.storage.includes(part)));
+                diff.add.push(...rig.caseFan.filter(part => !this.caseFan.includes(part)));
+                diff.remove.push(...this.caseFan.filter(part => !rig.caseFan.includes(part)));
+                diff.add.push(...rig.radiator.filter(part => !this.radiator.includes(part)));
+                diff.remove.push(...this.radiator.filter(part => !rig.radiator.includes(part)));
+                diff.add.push(...rig.reservoir.filter(part => !this.reservoir.includes(part)));
+                diff.remove.push(...this.reservoir.filter(part => !rig.reservoir.includes(part)));
+                diff.add.push(...rig.m2.filter(part => !this.m2.includes(part)));
+                diff.remove.push(...this.m2.filter(part => !rig.m2.includes(part)));
+
+                diff.remove = diff.remove.filter(part => part != null);
+                return diff;
+            }
+
+            Score() {
+                if (this.ram.length == 0 || !this.motherboard || !this.cpu || this.gpu.length == 0) {
+                    return {
+                        cpuScore: 0,
+                        gpuScore: 0,
+                        total: 0,
+                    };
+                }
+                const ramSpeed = Math.min(this.ram[0].speed, this.motherboard.ramSpeed);
+                const fps = Math.max(0, this.cpu.coefClock * this.cpu.clockFreq + this.cpu.coefMemChannel * Math.min(2, this.ram.length) +
+                    this.cpu.coefMemClock * ramSpeed + this.cpu.coefAdjustment);
+                const cpuScore = Math.max(fps * 298.0, 100);
+                let gpuScore;
+                const score11 = Math.min(this.gpu[0].score11, this.gpu[1]?.score11 ?? Infinity);
+                const score12 = Math.min(this.gpu[0].score12, this.gpu[1]?.score12 ?? Infinity);
+                const score21 = Math.min(this.gpu[0].score21, this.gpu[1]?.score21 ?? Infinity);
+                const score22 = Math.min(this.gpu[0].score22, this.gpu[1]?.score22 ?? Infinity);
+                if (this.gpu.length == 1) {
+                    gpuScore = Math.max(Math.floor(328.0 / (1 / score11 + 1 / score21)), 100)
+                } else {
+                    gpuScore = Math.max(Math.floor(328.0 / (1 / score12 + 1 / score22)), 100)
+                }
+                return {
+                    cpuScore: parseInt(cpuScore),
+                    gpuScore: parseInt(gpuScore),
+                    total: parseInt(1.0 / (0.85 / gpuScore + 0.15 / cpuScore)),
+                };
+            }
+
+        }
+
+        // All parts from job rigs are considered 0 cost to allow keep using them in the job
+        // Parts from inventory has their budget value as cost, which accounts for total budget of a job
+        function CreatePartFromInstance(partInstance, partDescs, cost = 0) {
+            if (partInstance == null) {
+                return null;
+            }
+            const partDesc = partDescs.find(partDesc => partDesc.id == partInstance.id);
+            if (partDesc) {
+                return new Part({
+                    partDesc: partDesc,
+                    used: !partInstance.isNew,
+                    broken: partInstance.broken,
+                    cost: cost,
+                    jobId: partInstance.jobId,
+                });
+            } else {
+                return null;
+            }
+        }
+
+        const app = createApp({
+            data() {
+                return {
+                    navigator: navigator,
+                    jobs: [],
+                    allPartDescs: [],
+                    partDescs: {
+                        motherboard: [],
+                        cpu: [],
+                        cooler: [],
+                        psu: [],
+                        ram: [],
+                        gpu: [],
+                        storage: [],
+                        other: []
+                    },
+                    parts: [],
+                    inventory: [],
+                    fastMode: true,
+                    rigBuilder: {
+                        ux: {
+                            partType: 'all',
+                            manufacturer: 'All',
+                            partDisplayName: null,
+                            part: null,
+                            usedPart: null,
+                            minCPU: null,
+                            minGPU: null,
+                            ramChannel: 1,
+                            ramSpeed: 2133,
+                            onlyShowUsedCPU: true,
+                        },
+                        wit: {
+                            minCPU: null,
+                            minGPU: null,
+                            minVRAM: null,
+                            minRAM: null,
+                        },
+                        rig: new Rig(),
+                        ramGroups: [],
+                        gpuGroups: [],
+                    },
+                    ux: {},
+                };
+            },
+            watch: {
+                'rigBuilder.ux.partType'() {
+                    this.rigBuilder.ux.manufacturer = 'All';
+                    this.rigBuilder.ux.partDisplayName = null;
+                },
+                'rigBuilder.ux.manufacturer'() {
+                    this.rigBuilder.ux.partDisplayName = null;
+                },
+                'rigBuilder.ux.partDisplayName'(displayName, oldValue) {
+                    const partDesc = this.allPartDescs.find(partDesc => partDesc.DisplayName() == displayName && partDesc.price > 0);
+                    if (partDesc) {
+                        this.rigBuilder.ux.part = new Part({ partDesc: partDesc, cost: partDesc.price });
+                        if (this.rigBuilder.ux.part) {
+                            this.rigBuilder.ux.usedPart = this.inventory.find(part => part.used && !part.broken && !part.marked && part.id == this.rigBuilder.ux.part.id);
+                        }
+                    }
+                },
+                'rigBuilder.ux.minCPU'(displayName) {
+                    this.rigBuilder.wit.minCPU = partDesc = this.allPartDescs.find(partDesc => partDesc.DisplayName() == displayName);
+                },
+                'rigBuilder.ux.minGPU'(displayName) {
+                    this.rigBuilder.wit.minGPU = partDesc = this.allPartDescs.find(partDesc => partDesc.DisplayName() == displayName);
+                },
+            },
+            computed: {
+                CaseList() {
+                    return this.allPartDescs.filter(part => part.type == "CASE").map(part => part.DisplayName()).sort((lhs, rhs) => lhs.price - rhs.price);
+                },
+                GPUList() {
+                    return this.partDescs.gpu.map(part => part.DisplayName()).sort((lhs, rhs) => lhs.localeCompare(rhs));
+                },
+                CPUList() {
+                    return this.partDescs.cpu.filter(part => part.price > 0).map(part => part.DisplayName()).sort((lhs, rhs) => lhs.localeCompare(rhs));
+                },
+                MotherboardList() {
+                    return this.partDescs.motherboard.map(part => part.DisplayName()).sort((lhs, rhs) => lhs.localeCompare(rhs));
+                },
+                PSUList() {
+                    return this.partDescs.psu.map(part => part.DisplayName()).sort((lhs, rhs) => lhs.localeCompare(rhs));
+                },
+                RAMList() {
+                    return this.partDescs.ram.map(part => part.DisplayName()).sort((lhs, rhs) => lhs.localeCompare(rhs));
+                },
+                StorageList() {
+                    return this.partDescs.storage.map(part => part.DisplayName()).sort((lhs, rhs) => lhs.localeCompare(rhs));
+                },
+                AllManufacturers() {
+                    return ['None'].concat(this.allPartDescs.filter(part => part.inShop && part.manufacturer).map(part => part.manufacturer).filter((v, i, arr) => arr.indexOf(v) == i));
+                },
+                ManufacturerList() {
+                    return {
+                        'CASE': this.allPartDescs.filter(part => part.type == "CASE").map(part => part.manufacturer).filter((v, i, arr) => arr.indexOf(v) == i).sort((lhs, rhs) => lhs.localeCompare(rhs)),
+                        'MOTHERBOARD': this.partDescs.motherboard.map(part => part.manufacturer).filter((v, i, arr) => arr.indexOf(v) == i).sort((lhs, rhs) => lhs.localeCompare(rhs)),
+                        'CPU': this.partDescs.cpu.map(part => part.manufacturer).filter((v, i, arr) => arr.indexOf(v) == i).sort((lhs, rhs) => lhs.localeCompare(rhs)),
+                        'COOLER': this.partDescs.cooler.map(part => part.manufacturer).filter((v, i, arr) => arr.indexOf(v) == i).sort((lhs, rhs) => lhs.localeCompare(rhs)),
+                        'RAM': this.partDescs.ram.map(part => part.manufacturer).filter((v, i, arr) => arr.indexOf(v) == i).sort((lhs, rhs) => lhs.localeCompare(rhs)),
+                        'GPU': this.partDescs.gpu.map(part => part.manufacturer).filter((v, i, arr) => arr.indexOf(v) == i).sort((lhs, rhs) => lhs.localeCompare(rhs)),
+                        'PSU': this.partDescs.psu.map(part => part.manufacturer).filter((v, i, arr) => arr.indexOf(v) == i).sort((lhs, rhs) => lhs.localeCompare(rhs)),
+                        'STORAGE': this.partDescs.storage.map(part => part.manufacturer).filter((v, i, arr) => arr.indexOf(v) == i).sort((lhs, rhs) => lhs.localeCompare(rhs)),
+                        'OTHER': this.partDescs.other.map(part => part.manufacturer).filter((v, i, arr) => arr.indexOf(v) == i).sort((lhs, rhs) => lhs.localeCompare(rhs)),
+                    };
+                },
+            },
+            methods: {
+                Calculate(job) {
+                    const rig = job.rig.Duplicate();
+
+                    // Return a list of candidates to build a rig with for a certain part type.
+                    // The list comes from 3 sources
+                    // 1. If used parts are allowed, all used parts in inventory are candidates. Unused parts in inventory are ignored
+                    // 2. The part from the initial rig of the job
+                    // 3. Any part available in shop. For RAM/GPU/etc, generate up to numberOfCopy instances
+                    const inventory = this.inventory;
+                    const allPartDescs = this.allPartDescs;
+                    const manufacturerList = this.ManufacturerList;
+                    function GeneratePartCandidates(type, currentPart, numberOfCopy = 1) {
+                        const requiredManufacturer = manufacturerList[type].includes(job.translatedObjective.manufacturer) ?
+                            job.translatedObjective.manufacturer : null;
+                        const parts = inventory.filter(part =>
+                            part.type == type && !part.broken &&
+                            (job.allowUsed && part.used) &&
+                            (requiredManufacturer == null || part.manufacturer == requiredManufacturer) &&
+                            (part.jobId == 0 || part.jobId == job.id));
+                        if (currentPart && !Array.isArray(currentPart)) {
+                            if (!currentPart.broken) {
+                                parts.push(currentPart);
+                            }
+                        } else if (currentPart && Array.isArray(currentPart)) {
+                            parts.push(...currentPart.filter(part => !part.broken));
+                        }
+                        if (job.allowReplacementParts.includes(type)) {
+                            for (let i = 0; i < numberOfCopy; i++) {
+                                parts.push(...allPartDescs.filter(partDesc =>
+                                    partDesc.type == type && partDesc.inShop &&
+                                    (requiredManufacturer == null || partDesc.manufacturer == requiredManufacturer)
+                                ).map(partDesc => new Part({ partDesc: partDesc, cost: partDesc.price })));
+                            }
+                        }
+                        return parts;
+                    }
+
+                    let motherboardParts = GeneratePartCandidates("MOTHERBOARD", job.rig.motherboard).sort((lhs, rhs) => lhs.cost - rhs.cost);
+                    let cpuParts = GeneratePartCandidates("CPU", job.rig.cpu).sort((lhs, rhs) => lhs.cost - rhs.cost);
+                    let coolerParts = GeneratePartCandidates("COOLER", job.rig.cooler).sort((lhs, rhs) => lhs.cost - rhs.cost);
+                    let psuParts = GeneratePartCandidates("PSU", job.rig.psu).sort((lhs, rhs) => lhs.cost - rhs.cost);
+                    let gpuParts = GeneratePartCandidates("GPU", job.rig.gpu).sort((lhs, rhs) => lhs.cost - rhs.cost);
+                    let ramParts = GeneratePartCandidates("RAM", job.rig.ram).sort((lhs, rhs) => lhs.cost - rhs.cost);
+
+                    const translatedObjective = {
+                        budget: job.budget
+                    };
+                    const betterGPU = this.partDescs.gpu.find(partDesc => partDesc.DisplayName() == job.translatedObjective.betterGPU);
+                    if (betterGPU) {
+                        translatedObjective.gpuQuality = betterGPU.quality;
+                        translatedObjective.gpuQualityInclusive = job.translatedObjective.betterGPUInclusive;
+                    }
+                    const betterCPU = this.partDescs.cpu.find(partDesc => partDesc.DisplayName() == job.translatedObjective.betterCPU);
+                    if (betterCPU) {
+                        translatedObjective.cpuQuality = betterCPU.quality;
+                        translatedObjective.cpuQualityInclusive = job.translatedObjective.betterCPUInclusive;
+                    }
+                    if (job.translatedObjective.ramSize != 'None') {
+                        translatedObjective.ramSize = parseInt(job.translatedObjective.ramSize);
+                    }
+                    if (job.translatedObjective.vramSize) {
+                        translatedObjective.vramSize = parseInt(job.translatedObjective.vramSize);
+                    }
+                    if (job.translatedObjective.score3dmark) {
+                        translatedObjective.score3dmark = parseInt(job.translatedObjective.score3dmark);
+                    }
+
+                    // Optimization opportunities
+                    if (job.forceDualGPU) {
+                        motherboardParts = motherboardParts.filter(part => part.supportSLI || part.supportCF);
+                        gpuParts = gpuParts.filter(part => part.dual);
+                    }
+                    if (translatedObjective.cpuQuality) {
+                        const quality = (translatedObjective.cpuQualityInclusive ? 0 : 1) + translatedObjective.cpuQuality;
+                        cpuParts = cpuParts.filter(part => part.quality >= quality);
+                    }
+                    if (translatedObjective.gpuQuality) {
+                        const quality = (translatedObjective.gpuQualityInclusive ? 0 : 1) + translatedObjective.gpuQuality;
+                        gpuParts = gpuParts.filter(part => part.quality >= quality);
+                    }
+                    if (job.translatedObjective.vramSize) {
+                        gpuParts = gpuParts.filter(part => part.vram >= job.translatedObjective.vramSize);
+                    }
+
+                    let stopSolving = false;
+                    let count = 0;
+                    const fastMode = this.fastMode;
+                    function BuildRig() {
+                        if (stopSolving) {
+                            return false;
+                        }
+
+
+                        count++;
+                        //console.log(
+                        //    rig.motherboard.DebugString() + ", " +
+                        //    rig.cpu.DebugString() + ", " +
+                        //    rig.cooler.DebugString() + ", " +
+                        //    rig.psu.DebugString() + ", " +
+                        //    rig.gpu.map(gpu => gpu.DebugString()).join(", ") + ", " +
+                        //    rig.ram.map(ram => ram.DebugString()).join(", ") + ", " +
+                        //    rig.storage.map(storage => storage.DebugString()).join(", ") + ", " +
+                        //    ""
+                        //);
+                        //console.log(rig.Compatible(translatedObjective) + ". Cost: " + rig.Cost());
+
+                        const result = rig.MeetObjectives(translatedObjective);
+                        if (result == "OK") {
+                            const diff = job.rig.Diff(rig);
+                            solutions.push({
+                                cost: rig.Cost(),
+                                diff: diff,
+                                valueKeptFromParts: diff.remove.reduce((sum, part) => sum + part?.price ?? 0, 0),
+                                score: rig.Score(),
+                            });
+                        }
+
+                        if (result == "OK") {
+                            // If all replacable parts are replaced, we have found an optimal solution where
+                            // we maximized the value of replaced parts we keep and met the client's requirements,
+                            // while not necessarily used up all the client's budget.
+                            const allPartsReplaced = ["MOTHERBOARD", "CPU", "COOLER", "PSU", "STORAGE", "GPU", "RAM"].every(type => {
+                                if (!job.allowReplacementParts.includes(type)) {
+                                    return true;
+                                }
+                                switch (type) {
+                                    case "MOTHERBOARD":
+                                        return rig.motherboard != job.rig.motherboard;
+                                    case "CPU":
+                                        return rig.cpu != job.rig.cpu;
+                                    case "COOLER":
+                                        return rig.cooler != job.rig.cooler;
+                                    case "PSU":
+                                        return rig.psu != job.rig.psu;
+                                    case "STORAGE":
+                                        return job.rig.storage.every(part => !rig.storage.includes(part));
+                                    case "GPU":
+                                        return job.rig.gpu.every(part => !rig.gpu.includes(part));
+                                    case "RAM":
+                                        return job.rig.ram.every(part => !rig.ram.includes(part));
+                                }
+                                return false;
+                            });
+                            if (fastMode && allPartsReplaced) {
+                                stopSolving = true;
+                                console.log("Optimal solution found, stop calcualtion.");
+                            }
+                            return allPartsReplaced;
+                        } else {
+                            return false;
+                        }
+                    }
+                    function InstallMotherboard() {
+                        if (stopSolving) {
+                            return;
+                        }
+                        if (job.allowReplacementParts.includes("MOTHERBOARD")) {
+                            for (let i = 0; i < motherboardParts.length; i++) {
+                                rig.motherboard = motherboardParts[i];
+                                if (rig.OverBudget(job.budget)) {
+                                    break;
+                                }
+                                if (!rig.Compatible_Motherboard_Case()) {
+                                    continue;
+                                }
+                                InstallCPU();
+                            }
+                            rig.motherboard = job.rig.motherboard;
+                        } else {
+                            InstallCPU();
+                        }
+                    }
+                    function InstallCPU() {
+                        if (stopSolving) {
+                            return;
+                        }
+                        if (job.allowReplacementParts.includes("CPU")) {
+                            for (let i = 0; i < cpuParts.length; i++) {
+                                rig.cpu = cpuParts[i];
+                                if (rig.OverBudget(job.budget)) {
+                                    break;
+                                }
+                                if (!rig.Compatible_CPU_Motherboard()) {
+                                    continue;
+                                }
+                                if (translatedObjective.cpuQuality && !rig.Objective_CPU_Quality()) {
+                                    continue;
+                                }
+                                InstallGPU();
+                            }
+                            rig.cpu = job.rig.cpu;
+                        } else {
+                            InstallGPU();
+                        }
+                    }
+                    function InstallGPU() {
+                        if (stopSolving) {
+                            return;
+                        }
+                        if (job.allowReplacementParts.includes("GPU")) {
+                            for (let i = 0; i < gpuParts.length; i++) {
+                                rig.gpu = [gpuParts[i]];
+                                if (rig.OverBudget(job.budget)) {
+                                    break;
+                                }
+                                if (!rig.Compatible_GPU_Case()) {
+                                    continue;
+                                }
+                                if (!job.forceDualGPU) {
+                                    InstallRAM();
+                                }
+                                // Install a second GPU. For simplicity, always use the same model
+                                if ((job.allowDualGPU || job.forceDualGPU) && gpuParts[i].dual) {
+                                    // Try to find a pair in inventory first. If none exist, generate a new one from Shop Category
+                                    let pair;
+                                    if (job.allowUsed) {
+                                        pair = inventory.find(inv => inv != rgpuParts[i] &&
+                                            inv.chipset == gpuParts[i].chipset && inv.vram == gpuParts[i].vram);
+                                    }
+                                    if (!pair) {
+                                        pair = new Part({ partDesc: gpuParts[i], cost: gpuParts[i].price });
+                                    }
+                                    rig.gpu = [gpuParts[i], pair];
+                                    if (!rig.OverBudget(job.budget)) {
+                                        InstallRAM();
+                                    }
+                                }
+                            }
+                            rig.gpu = job.rig.gpu;
+                        } else {
+                            InstallRAM();
+                        }
+                    }
+                    function InstallRAM() {
+                        if (stopSolving) {
+                            return;
+                        }
+                        if (job.allowReplacementParts.includes("RAM")) {
+                            for (let i = 0; i < ramParts.length; i++) {
+                                rig.ram = [ramParts[i]];
+                                if (rig.OverBudget(job.budget)) {
+                                    break;
+                                }
+                                if (!rig.Compatible_RAM_Motherboard()) {
+                                    continue;
+                                }
+                                InstallPSU();
+                                // Install a second RAM
+                                // Try to find a pair in inventory first. If none exist, generate a new one from Shop Category
+                                let pair;
+                                if (job.allowUsed) {
+                                    pair = inventory.find(inv => inv != ramParts[i] && inv.manufacturer == ramParts[i].manufacturer &&
+                                        inv.size == ramParts[i].size && inv.speed == ramParts[i].speed);
+                                }
+                                if (!pair) {
+                                    pair = new Part({ partDesc: ramParts[i], cost: ramParts[i].price });
+                                }
+                                rig.ram = [ramParts[i], pair];
+                                InstallPSU();
+                            }
+                            rig.ram = job.rig.ram;
+                        } else {
+                            InstallPSU();
+                        }
+                    }
+                    function InstallPSU() {
+                        if (stopSolving) {
+                            return;
+                        }
+                        if (job.allowReplacementParts.includes("PSU")) {
+                            for (let i = 0; i < psuParts.length; i++) {
+                                rig.psu = psuParts[i];
+                                if (rig.OverBudget(job.budget)) {
+                                    break;
+                                }
+                                if (!rig.Compatible_PSU()) {
+                                    continue;
+                                }
+                                InstallCooler();
+                            }
+                            rig.psu = job.rig.psu;
+                        } else {
+                            InstallCooler();
+                        }
+                    }
+                    function InstallCooler() {
+                        if (stopSolving) {
+                            return;
+                        }
+                        if (job.allowReplacementParts.includes("COOLER")) {
+                            for (let i = 0; i < coolerParts.length; i++) {
+                                rig.cooler = coolerParts[i];
+                                if (rig.OverBudget(job.budget)) {
+                                    break;
+                                }
+                                if (!rig.Compatible_Cooler_Motherboard()) {
+                                    continue;
+                                }
+                                InstallStorage();
+                            }
+                            rig.cooler = job.rig.cooler;
+                        } else {
+                            InstallStorage();
+                        }
+                    }
+                    function InstallStorage() {
+                        if (stopSolving) {
+                            return;
+                        }
+                        // Storage to be manually calculated
+                        BuildRig();
+                    }
+
+                    const solutions = [];
+                    // Building rigs starting with motherboard
+                    InstallMotherboard();
+                    job.solutions = solutions.sort((lhs, rhs) => {
+                        const valueKeptDiff = rhs.valueKeptFromParts - lhs.valueKeptFromParts;
+                        if (valueKeptDiff == 0) {
+                            return rhs.cost - lhs.cost;
+                        }
+                        return valueKeptDiff;
+                    });
+                },
+                ToggleArrayValue(arr, value) {
+                    if (arr.includes(value)) {
+                        arr.splice(arr.indexOf(value), 1);
+                    } else {
+                        arr.push(value);
+                    }
+                },
+                RigBuilderAddPart(used) {
+                    let part = this.rigBuilder.ux.part;
+                    if (used && this.rigBuilder.ux.usedPart) {
+                        part = this.rigBuilder.ux.usedPart;
+                        if (part.marked) {
+                            return;
+                        }
+                        part.marked = true;
+                    }
+                    let type = part.type.toLowerCase();
+                    if (['hdd', 'ssd'].includes(type)) {
+                        type = 'storage';
+                    }
+                    if (['case', 'motherboard', 'cpu', 'cooler', 'psu'].includes(type)) {
+                        this.rigBuilder.rig[type] = part;
+                    }
+                    if (['ram', 'gpu', 'storage'].includes(type)) {
+                        this.rigBuilder.rig[type].push(part);
+                    }
+                },
+                RigBuilderRemovePart(part) {
+                    if (!part) {
+                        return;
+                    }
+                    part.marked = false;
+                    const type = part.type.toLowerCase();
+                    if (['case', 'motherboard', 'cpu', 'cooler', 'psu'].includes(type)) {
+                        this.rigBuilder.rig[type] = null;
+                    }
+                    ['ram', 'gpu', 'storage'].forEach(type => {
+                        if (this.rigBuilder.rig[type].includes(part)) {
+                            this.rigBuilder.rig[type].splice(this.rigBuilder.rig[type].indexOf(part), 1);
+                        }
+                    });
+                },
+                FindRamGroups() {
+                    const groups = [];
+                    const rams = this.inventory.filter(ram => ram.type == 'RAM' && !ram.broken && ram.used);
+                    rams.forEach(ram => {
+                        const group = groups.find(group => {
+                            const otherRam = group[0];
+                            if (ram.manufacturer == otherRam.manufacturer && ram.speed == otherRam.speed && ram.size == otherRam.size) {
+                                return true;
+                            }
+                            return false;
+                        });
+                        if (group) {
+                            group.push(ram);
+                        } else {
+                            groups.push([ram]);
+                        }
+                    });
+                    this.rigBuilder.ramGroups = groups.filter(group => group.length > 1);
+                },
+                FindGPUGroups() {
+                    const groups = [];
+                    const gpus = this.inventory.filter(gpu => gpu.type == 'GPU' && !gpu.broken && gpu.used);
+                    gpus.forEach(gpu => {
+                        const group = groups.find(group => {
+                            const otherGPU = group[0];
+                            if (gpu.dual && otherGPU.dual && gpu.chipset == otherGPU.chipset && gpu.vram == otherGPU.vram) {
+                                return true;
+                            }
+                            return false;
+                        });
+                        if (group) {
+                            group.push(gpu);
+                        } else {
+                            groups.push([gpu]);
+                        }
+                    });
+                    groups.forEach(group => group.sort((lhs, rhs) => lhs.CopyName().localeCompare(rhs.CopyName())));
+                    this.rigBuilder.gpuGroups = groups.filter(group => group.length > 1);
+                },
+            },
+            created() {
+                fetch('./pcbsjs_db.json').then(res => res.json()).then(pcbsjs_db => {
+                    pcbsjs_db.parts.forEach(part => {
+                        const partDesc = new PartDesc();
+                        // common fields
+                        partDesc.id = part.id;
+                        partDesc.name = part.name;
+                        if (['AIR_COOLER', 'LIQUID_COOLER'].includes(part.type)) {
+                            partDesc.type = 'COOLER';
+                        } else {
+                            partDesc.type = part.type;
+                        }
+                        partDesc.manufacturer = part.manufacturer;
+                        partDesc.inShop = part.inShop;
+                        partDesc.price = part.price;
+                        partDesc.quality = part.quality;
+                        // part-specific specs
+                        partDesc.wattage = part.wattage;
+                        partDesc.socket = part.socket;
+                        partDesc.size = part.size;
+                        partDesc.ddr = part.ddr;
+                        partDesc.supportSLI = part.supportSLI;
+                        partDesc.supportCF = part.supportCF;
+                        partDesc.speed = part.speed;
+                        partDesc.vram = part.vram;
+                        partDesc.useSLI = part.useSLI;
+                        partDesc.dual = part.dual;
+                        partDesc.chipset = part.chipset;
+                        partDesc.sockets = part.sockets;
+                        partDesc.ramSpeed = part.ramSpeed;
+                        partDesc.length = part.length;
+                        partDesc.maxPSULength = part.maxPSULength;
+                        partDesc.maxCPUFanHeight = part.maxCPUFanHeight;
+                        partDesc.maxGPULength = part.maxGPULength;
+                        partDesc.maxRadiatorLength120 = part.maxRadiatorLength120;
+                        partDesc.maxRadiatorLength140 = part.maxRadiatorLength140;
+                        partDesc.psuSizes = part.psuSizes;
+                        partDesc.motherboardTypes = part.motherboardTypes;
+                        // 3dmark params
+                        partDesc.coefClock = part.coefClock;
+                        partDesc.coefMemChannel = part.coefMemChannel;
+                        partDesc.coefMemClock = part.coefMemClock;
+                        partDesc.coefAdjustment = part.coefAdjustment;
+                        partDesc.clockFreq = part.clockFreq;
+                        partDesc.score11 = part.score11;
+                        partDesc.score21 = part.score21;
+                        partDesc.score12 = part.score12;
+                        partDesc.score22 = part.score22;
+
+                        this.allPartDescs.push(partDesc);
+                        switch (partDesc.type) {
+                            case 'MOTHERBOARD':
+                                this.partDescs.motherboard.push(partDesc);
+                                break;
+                            case 'CPU':
+                                this.partDescs.cpu.push(partDesc);
+                                break;
+                            case 'COOLER':
+                                this.partDescs.cooler.push(partDesc);
+                                break;
+                            case 'RAM':
+                                this.partDescs.ram.push(partDesc);
+                                break;
+                            case 'PSU':
+                                this.partDescs.psu.push(partDesc);
+                                break;
+                            case 'GPU':
+                                this.partDescs.gpu.push(partDesc);
+                                break;
+                            case 'HDD':
+                            case 'SSD':
+                            case 'STORAGE':
+                                this.partDescs.storage.push(partDesc);
+                                break;
+                            default:
+                                this.partDescs.other.push(partDesc);
+                                break;
+                        }
+                    });
+                    this.partDescs.motherboard = this.partDescs.motherboard.sort((p1, p2) => p1.price - p2.price);
+                    this.partDescs.cpu = this.partDescs.cpu.sort((p1, p2) => p1.price - p2.price);
+                    this.partDescs.cooler = this.partDescs.cooler.sort((p1, p2) => p1.price - p2.price);
+                    this.partDescs.ram = this.partDescs.ram.sort((p1, p2) => p1.price - p2.price);
+                    this.partDescs.psu = this.partDescs.psu.sort((p1, p2) => p1.price - p2.price);
+                    this.partDescs.gpu = this.partDescs.gpu.sort((p1, p2) => p1.price - p2.price);
+                    this.partDescs.storage = this.partDescs.storage.sort((p1, p2) => p1.price - p2.price);
+                    this.partDescs.other = this.partDescs.other.sort((p1, p2) => p1.price - p2.price);
+
+                    fetch('./pcbsjs.json').then(res => res.json()).then(json => {
+                        this.jobs = json.jobs.map(rawJob => {
+                            const job = {
+                                id: rawJob.id,
+                                from: rawJob.from,
+                                labor: rawJob.labor,
+                                budget: rawJob.budget,
+                                type: rawJob.type,
+                                initialRig: rawJob.initialRig,
+                                objectives: rawJob.objectives,
+                                translatedObjective: {},
+
+                                rig: null,
+                                solutions: null, // list
+
+                                allowUsed: false,
+                                allowDualGPU: false,
+                                forceDualGPU: false,
+                                allowReplacementParts: [],
+                                objective: {
+                                    betterGPU: null,
+                                    betterCPU: null,
+                                },
+                            };
+
+                            const rig = new Rig();
+                            rig.case = CreatePartFromInstance(job.initialRig.case, this.allPartDescs);
+                            rig.motherboard = CreatePartFromInstance(job.initialRig.motherboard, this.allPartDescs);
+                            rig.cpu = CreatePartFromInstance(job.initialRig.cpu, this.allPartDescs);
+                            rig.cooler = CreatePartFromInstance(job.initialRig.cooler, this.allPartDescs);
+                            rig.psu = CreatePartFromInstance(job.initialRig.psu, this.allPartDescs);
+                            rig.storage = job.initialRig.storage.map(part => CreatePartFromInstance(part, this.allPartDescs));
+                            rig.caseFan = job.initialRig.caseFan.map(part => CreatePartFromInstance(part, this.allPartDescs));
+                            rig.radiator = job.initialRig.radiator.map(part => CreatePartFromInstance(part, this.allPartDescs));
+                            rig.reservoir = job.initialRig.reservoir.map(part => CreatePartFromInstance(part, this.allPartDescs));
+                            rig.gpu = job.initialRig.pci.map(part => CreatePartFromInstance(part, this.allPartDescs));
+                            rig.ram = job.initialRig.ram.map(part => CreatePartFromInstance(part, this.allPartDescs));
+                            rig.m2 = job.initialRig.m2.map(part => CreatePartFromInstance(part, this.allPartDescs));
+                            job.rig = rig;
+                            job.initialRig = job.rig.Duplicate();
+                            job.initialRig.case = null;
+                            return job;
+                        });;
+
+                        this.inventory = json.inventory.map(part => CreatePartFromInstance(part, this.allPartDescs, part.budgetValue)).filter(part => part != null);
+                    });
+                });
+            }
+        })
+        const vuetify = createVuetify({
+            theme: {
+                defaultTheme: 'dark'
+            }
+        });
+        app.component('v-rig', {
+            template: document.getElementById("v-rig").innerHTML,
+            props: ["rig", "ux", "db", "inventory", "navigator"],
+        });
+        app.use(vuetify).mount('#app');
+    </script>
+</body>
+</html>
